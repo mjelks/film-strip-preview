@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var newPresetName = ""
     @State private var dragOffset: CGFloat = 0
     @State private var isDragging = false
+    @State private var imageViewSize: CGSize = .zero
+    @State private var imageActualSize: CGSize = .zero
     
     var body: some View {
         ZStack {
@@ -40,11 +42,56 @@ struct ContentView: View {
                 
                 // Camera preview with film negative effect (FULL SCREEN)
                 if let image = cameraManager.processedImage {
-                    Image(image, scale: 1.0, label: Text("Film Preview"))
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 8)
+                    GeometryReader { geometry in
+                        Image(image, scale: 1.0, label: Text("Film Preview"))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.horizontal, 8)
+                            .background(
+                                GeometryReader { imageGeometry in
+                                    Color.clear
+                                        .onAppear {
+                                            imageViewSize = imageGeometry.size
+                                            imageActualSize = CGSize(
+                                                width: CGFloat(image.width),
+                                                height: CGFloat(image.height)
+                                            )
+                                        }
+                                        .onChange(of: imageGeometry.size) { _, newSize in
+                                            imageViewSize = newSize
+                                        }
+                                }
+                            )
+                            .overlay {
+                                if cameraManager.isEyedropperActive {
+                                    EyedropperOverlay(
+                                        isActive: $cameraManager.isEyedropperActive,
+                                        onSample: { location in
+                                            // Convert tap location to image coordinates
+                                            let imagePoint = convertViewPointToImagePoint(
+                                                viewPoint: location,
+                                                viewSize: imageViewSize,
+                                                imageSize: imageActualSize
+                                            )
+                                            cameraManager.sampleMaskColor(at: imagePoint, from: image)
+                                        }
+                                    )
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                if cameraManager.isEyedropperActive {
+                                    let imagePoint = convertViewPointToImagePoint(
+                                        viewPoint: location,
+                                        viewSize: imageViewSize,
+                                        imageSize: imageActualSize
+                                    )
+                                    cameraManager.sampleMaskColor(at: imagePoint, from: image)
+                                    cameraManager.isEyedropperActive = false
+                                }
+                            }
+                    }
                 } else {
                     ProgressView("Starting camera...")
                         .foregroundStyle(.white)
@@ -337,6 +384,64 @@ struct ContentView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .padding(.horizontal)
                             
+                            // Eyedropper button to sample mask color
+                            VStack(spacing: 4) {
+                                Button(action: {
+                                    cameraManager.isEyedropperActive.toggle()
+                                }) {
+                                    HStack {
+                                        Image(systemName: "eyedropper")
+                                        Text(cameraManager.maskSampleColor == nil ? "Sample Orange Mask" : "Mask Sampled")
+                                            .font(.caption)
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 16)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(cameraManager.isEyedropperActive ? Color.orange.opacity(0.3) : (cameraManager.maskSampleColor != nil ? Color.green.opacity(0.3) : Color.clear))
+                                    )
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(cameraManager.isEyedropperActive ? Color.orange : (cameraManager.maskSampleColor != nil ? Color.green : Color.clear), lineWidth: 2)
+                                    )
+                                }
+                                
+                                if let sample = cameraManager.maskSampleColor {
+                                    HStack {
+                                        HStack(spacing: 4) {
+                                            Circle()
+                                                .fill(Color(red: Double(sample.x), green: Double(sample.y), blue: Double(sample.z)))
+                                                .frame(width: 16, height: 16)
+                                                .overlay(Circle().stroke(.white, lineWidth: 1))
+                                            Text("R: \(String(format: "%.2f", sample.x))")
+                                                .font(.caption2.monospacedDigit())
+                                            Text("G: \(String(format: "%.2f", sample.y))")
+                                                .font(.caption2.monospacedDigit())
+                                            Text("B: \(String(format: "%.2f", sample.z))")
+                                                .font(.caption2.monospacedDigit())
+                                        }
+                                        Spacer()
+                                        Button(action: {
+                                            cameraManager.maskSampleColor = nil
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.red.opacity(0.8))
+                                                .font(.caption)
+                                        }
+                                    }
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.black.opacity(0.3))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
+                            .padding(.horizontal)
+                            
                             // Lock Settings Button
                             Button(action: {
                                 cameraManager.toggleLock()
@@ -419,6 +524,89 @@ struct ContentView: View {
         } message: {
             Text("Enter a name for this color preset (Temp: \(String(format: "%.2f", cameraManager.temperature)), Tint: \(String(format: "%.2f", cameraManager.tint)))")
         }
+    }
+    
+    // Helper function to convert view coordinates to image coordinates
+    private func convertViewPointToImagePoint(viewPoint: CGPoint, viewSize: CGSize, imageSize: CGSize) -> CGPoint {
+        // Calculate the displayed image size (accounting for aspect fit)
+        let imageAspect = imageSize.width / imageSize.height
+        let viewAspect = viewSize.width / viewSize.height
+        
+        var displayedSize: CGSize
+        if imageAspect > viewAspect {
+            // Image is wider - constrained by width
+            displayedSize = CGSize(width: viewSize.width, height: viewSize.width / imageAspect)
+        } else {
+            // Image is taller - constrained by height
+            displayedSize = CGSize(width: viewSize.height * imageAspect, height: viewSize.height)
+        }
+        
+        // Calculate offset (image is centered in view)
+        let offsetX = (viewSize.width - displayedSize.width) / 2
+        let offsetY = (viewSize.height - displayedSize.height) / 2
+        
+        // Convert to image coordinates
+        let relativeX = (viewPoint.x - offsetX) / displayedSize.width
+        let relativeY = (viewPoint.y - offsetY) / displayedSize.height
+        
+        return CGPoint(
+            x: relativeX * imageSize.width,
+            y: relativeY * imageSize.height
+        )
+    }
+}
+
+// MARK: - Eyedropper Overlay
+
+struct EyedropperOverlay: View {
+    @Binding var isActive: Bool
+    let onSample: (CGPoint) -> Void
+    @State private var tapLocation: CGPoint?
+    
+    var body: some View {
+        ZStack {
+            // Semi-transparent overlay
+            Color.black.opacity(0.3)
+            
+            // Instructions
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        isActive = false
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .padding()
+                    }
+                }
+                
+                Spacer()
+                
+                VStack(spacing: 12) {
+                    Image(systemName: "eyedropper.halffull")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white)
+                    
+                    Text("Tap on orange film border")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    
+                    Text("Sample the orange mask color\nfor accurate color conversion")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(20)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 10)
+                
+                Spacer()
+            }
+        }
+        .ignoresSafeArea()
     }
 }
 
