@@ -17,12 +17,14 @@ struct ColorPreset: Identifiable, Codable {
     var name: String
     var temperature: Double
     var tint: Double
+    var maskSample: SIMD3<Float>? // Store the eyedropper sample
     
-    init(id: UUID = UUID(), name: String, temperature: Double, tint: Double) {
+    init(id: UUID = UUID(), name: String, temperature: Double, tint: Double, maskSample: SIMD3<Float>? = nil) {
         self.id = id
         self.name = name
         self.temperature = temperature
         self.tint = tint
+        self.maskSample = maskSample
     }
 }
 
@@ -148,7 +150,12 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func addPreset(name: String) {
-        let preset = ColorPreset(name: name, temperature: temperature, tint: tint)
+        let preset = ColorPreset(
+            name: name, 
+            temperature: temperature, 
+            tint: tint,
+            maskSample: maskSampleColor // Save the eyedropper sample
+        )
         presets.append(preset)
         savePresets()
     }
@@ -164,6 +171,7 @@ class CameraManager: NSObject, ObservableObject {
     func applyPreset(_ preset: ColorPreset) {
         temperature = preset.temperature
         tint = preset.tint
+        maskSampleColor = preset.maskSample // Restore the eyedropper sample
         selectedPresetId = preset.id
     }
     
