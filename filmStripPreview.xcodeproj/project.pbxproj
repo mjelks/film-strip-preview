@@ -29,9 +29,22 @@
 		3C905D3E2F98429900FAC698 /* filmStripPreviewUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = filmStripPreviewUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3C2376602F9845AB00D81BAF /* Exceptions for "filmStripPreview" folder in "filmStripPreview" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3C905D262F98429800FAC698 /* filmStripPreview */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3C905D292F98429800FAC698 /* filmStripPreview */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3C2376602F9845AB00D81BAF /* Exceptions for "filmStripPreview" folder in "filmStripPreview" target */,
+			);
 			path = filmStripPreview;
 			sourceTree = "<group>";
 		};
@@ -398,6 +411,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = filmStripPreview/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to preview film negatives in real-time.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -442,6 +457,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = filmStripPreview/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to preview film negatives in real-time.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
