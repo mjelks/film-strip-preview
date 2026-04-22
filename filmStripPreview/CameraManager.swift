@@ -31,9 +31,18 @@ class CameraManager: NSObject, ObservableObject {
     @Published var effectEnabled = true
     @Published var temperature: Double = 0.0 // -1.0 (cool) to 1.0 (warm)
     @Published var tint: Double = 0.0 // -1.0 (green) to 1.0 (magenta)
+    @Published var exposure: Double = 0.0 // -2.0 to 2.0 EV
     @Published var isMacroMode = true // Default to macro ON
     @Published var presets: [ColorPreset] = []
     @Published var selectedPresetId: UUID?
+    @Published var centerCropAmount: Double = 0.0 // 0.0 (no crop) to 1.0 (heavy crop)
+    @Published var isLocked = false // Lock settings to freeze conversion parameters
+    
+    // Locked values stored when lock is enabled
+    private var lockedTemperature: Double = 0.0
+    private var lockedTint: Double = 0.0
+    private var lockedExposure: Double = 0.0
+    private var lockedCropAmount: Double = 0.0
     
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -43,6 +52,57 @@ class CameraManager: NSObject, ObservableObject {
     private let context = CIContext(options: [.useSoftwareRenderer: false])
     private var currentCamera: AVCaptureDevice.Position = .back
     private var isSessionConfigured = false
+    
+    // Cache the color kernel to avoid recreating it every frame
+    private lazy var c41Kernel: CIColorKernel? = {
+        CIColorKernel(source: """
+            kernel vec4 c41NegativeCorrection(__sample pixel, float temp, float tint) {
+                // Step 1: Neutralize the orange mask
+                // Updated C41 mask compensation factors with baked-in color correction
+                // Base values reduced from original (1.0, 1.5, 4.0)
+                float redComp = 1.0;
+                float greenComp = 1.15;  // Reduced from 1.5
+                float blueComp = 2.2;    // Reduced from 4.0
+                
+                vec3 adjusted = vec3(
+                    pixel.r * redComp,
+                    pixel.g * greenComp,
+                    pixel.b * blueComp
+                );
+                
+                // Step 2: Invert
+                vec3 inverted = vec3(1.0) - adjusted;
+                
+                // Step 3: Apply base color correction (equivalent to temp=-0.80, tint=+0.80)
+                // This bakes in the correction so sliders start at neutral
+                float baseTemp = -0.80;
+                float baseTint = 0.80;
+                
+                // Apply base temperature (cooler - adds blue, removes red)
+                inverted.r += baseTemp * 0.15;
+                inverted.b -= baseTemp * 0.15;
+                
+                // Apply base tint (more magenta - adds red/blue, removes green)
+                inverted.r += baseTint * 0.1;
+                inverted.g -= baseTint * 0.1;
+                inverted.b += baseTint * 0.1;
+                
+                // Step 4: Apply user adjustments on top of base correction
+                inverted.r += temp * 0.15;
+                inverted.b -= temp * 0.15;
+                
+                inverted.r += tint * 0.1;
+                inverted.g -= tint * 0.1;
+                inverted.b += tint * 0.1;
+                
+                // Step 5: Clamp to valid range
+                inverted = clamp(inverted, 0.0, 1.0);
+                
+                return vec4(inverted, pixel.a);
+            }
+            """
+        )
+    }()
     
     private let presetsKey = "colorPresets"
     
@@ -210,61 +270,26 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     
+    func toggleLock() {
+        isLocked.toggle()
+        
+        if isLocked {
+            // Store the current parameter values when locking
+            lockedTemperature = temperature
+            lockedTint = tint
+            lockedExposure = exposure
+            lockedCropAmount = centerCropAmount
+        }
+        // When unlocking, just use the current live values
+    }
+    
     // MARK: - C41 Film Negative Processing
     
-    private func applyC41Correction(to image: CIImage) -> CIImage? {
-        // Step 1: Create a custom kernel for the C41 correction
-        // This applies the mask neutralization, inversion, and clamping in one pass
-        
-        let kernel = CIColorKernel(source: """
-            kernel vec4 c41NegativeCorrection(__sample pixel, float temp, float tint) {
-                // Step 1: Neutralize the orange mask
-                // Updated C41 mask compensation factors with baked-in color correction
-                // Base values reduced from original (1.0, 1.5, 4.0)
-                float redComp = 1.0;
-                float greenComp = 1.15;  // Reduced from 1.5
-                float blueComp = 2.2;    // Reduced from 4.0
-                
-                vec3 adjusted = vec3(
-                    pixel.r * redComp,
-                    pixel.g * greenComp,
-                    pixel.b * blueComp
-                );
-                
-                // Step 2: Invert
-                vec3 inverted = vec3(1.0) - adjusted;
-                
-                // Step 3: Apply base color correction (equivalent to temp=-0.80, tint=+0.80)
-                // This bakes in the correction so sliders start at neutral
-                float baseTemp = -0.80;
-                float baseTint = 0.80;
-                
-                // Apply base temperature (cooler - adds blue, removes red)
-                inverted.r += baseTemp * 0.15;
-                inverted.b -= baseTemp * 0.15;
-                
-                // Apply base tint (more magenta - adds red/blue, removes green)
-                inverted.r += baseTint * 0.1;
-                inverted.g -= baseTint * 0.1;
-                inverted.b += baseTint * 0.1;
-                
-                // Step 4: Apply user adjustments on top of base correction
-                inverted.r += temp * 0.15;
-                inverted.b -= temp * 0.15;
-                
-                inverted.r += tint * 0.1;
-                inverted.g -= tint * 0.1;
-                inverted.b += tint * 0.1;
-                
-                // Step 5: Clamp to valid range
-                inverted = clamp(inverted, 0.0, 1.0);
-                
-                return vec4(inverted, pixel.a);
-            }
-            """
-        )
-        
-        guard let kernel = kernel else { return nil }
+    private func applyC41CorrectionWithValues(to image: CIImage, temperature: Double, tint: Double) -> CIImage? {
+        guard let kernel = c41Kernel else { 
+            print("⚠️ Failed to create C41 color kernel")
+            return nil 
+        }
         
         return kernel.apply(
             extent: image.extent,
@@ -277,9 +302,45 @@ class CameraManager: NSObject, ObservableObject {
         
         var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         
-        // Apply C41 correction if enabled
+        // Use locked values if locked, otherwise use current values
+        let activeTemperature = isLocked ? lockedTemperature : temperature
+        let activeTint = isLocked ? lockedTint : tint
+        let activeExposure = isLocked ? lockedExposure : exposure
+        let activeCropAmount = isLocked ? lockedCropAmount : centerCropAmount
+        
+        // Apply center crop if enabled (before processing to reduce edge light spill)
+        if activeCropAmount > 0.0 {
+            let extent = ciImage.extent
+            let cropFactor = 1.0 - (activeCropAmount * 0.5) // Max 50% crop from edges
+            let newWidth = extent.width * cropFactor
+            let newHeight = extent.height * cropFactor
+            let offsetX = (extent.width - newWidth) / 2.0
+            let offsetY = (extent.height - newHeight) / 2.0
+            
+            let cropRect = CGRect(
+                x: extent.origin.x + offsetX,
+                y: extent.origin.y + offsetY,
+                width: newWidth,
+                height: newHeight
+            )
+            
+            ciImage = ciImage.cropped(to: cropRect)
+        }
+        
+        // Apply exposure compensation first
+        if activeExposure != 0.0 {
+            if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
+                exposureFilter.setValue(ciImage, forKey: kCIInputImageKey)
+                exposureFilter.setValue(activeExposure, forKey: kCIInputEVKey)
+                if let output = exposureFilter.outputImage {
+                    ciImage = output
+                }
+            }
+        }
+        
+        // Apply C41 correction if enabled (using active temp/tint values)
         if effectEnabled {
-            if let corrected = applyC41Correction(to: ciImage) {
+            if let corrected = applyC41CorrectionWithValues(to: ciImage, temperature: activeTemperature, tint: activeTint) {
                 ciImage = corrected
             }
         }
