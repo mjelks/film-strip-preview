@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var newPresetName = ""
     @State private var dragOffset: CGFloat = 0
     @State private var isDragging = false
+    @State private var imageViewSize: CGSize = .zero
+    @State private var imageActualSize: CGSize = .zero
+    @State private var presetToDelete: ColorPreset? = nil
+    @State private var showDeleteConfirmation = false
     
     var body: some View {
         ZStack {
@@ -40,11 +44,56 @@ struct ContentView: View {
                 
                 // Camera preview with film negative effect (FULL SCREEN)
                 if let image = cameraManager.processedImage {
-                    Image(image, scale: 1.0, label: Text("Film Preview"))
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 8)
+                    GeometryReader { geometry in
+                        Image(image, scale: 1.0, label: Text("Film Preview"))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.horizontal, 8)
+                            .background(
+                                GeometryReader { imageGeometry in
+                                    Color.clear
+                                        .onAppear {
+                                            imageViewSize = imageGeometry.size
+                                            imageActualSize = CGSize(
+                                                width: CGFloat(image.width),
+                                                height: CGFloat(image.height)
+                                            )
+                                        }
+                                        .onChange(of: imageGeometry.size) { _, newSize in
+                                            imageViewSize = newSize
+                                        }
+                                }
+                            )
+                            .overlay {
+                                if cameraManager.isEyedropperActive {
+                                    EyedropperOverlay(
+                                        isActive: $cameraManager.isEyedropperActive,
+                                        onSample: { location in
+                                            // Convert tap location to image coordinates
+                                            let imagePoint = convertViewPointToImagePoint(
+                                                viewPoint: location,
+                                                viewSize: imageViewSize,
+                                                imageSize: imageActualSize
+                                            )
+                                            cameraManager.sampleMaskColor(at: imagePoint, from: image)
+                                        }
+                                    )
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                if cameraManager.isEyedropperActive {
+                                    let imagePoint = convertViewPointToImagePoint(
+                                        viewPoint: location,
+                                        viewSize: imageViewSize,
+                                        imageSize: imageActualSize
+                                    )
+                                    cameraManager.sampleMaskColor(at: imagePoint, from: image)
+                                    cameraManager.isEyedropperActive = false
+                                }
+                            }
+                    }
                 } else {
                     ProgressView("Starting camera...")
                         .foregroundStyle(.white)
@@ -52,31 +101,97 @@ struct ContentView: View {
                 }
             }
             
-            // Floating button to open controls (overlaid on top)
-            if !showControls {
-                VStack {
+            // Floating icons overlay (lower left: Macro, Lock, Exposure, Eyedropper; lower right: Hamburger menu)
+            VStack {
+                Spacer()
+                
+                HStack(alignment: .bottom) {
+                    // Left side: Macro, Lock, Exposure, Eyedropper icons
+                    HStack(spacing: 12) {
+                        // Macro Mode Toggle
+                        Button(action: {
+                            cameraManager.toggleMacroMode()
+                        }) {
+                            Image(systemName: "camera.macro")
+                                .font(.system(size: 24))
+                                .foregroundStyle(cameraManager.isMacroMode ? .orange : .white)
+                                .frame(width: 50, height: 50)
+                                .background(cameraManager.isMacroMode ? Color.orange.opacity(0.2) : Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(cameraManager.isMacroMode ? Color.orange : Color.white.opacity(0.3), lineWidth: 2)
+                                )
+                        }
+                        
+                        // Lock Settings Toggle
+                        Button(action: {
+                            cameraManager.toggleLock()
+                        }) {
+                            Image(systemName: cameraManager.isLocked ? "lock.fill" : "lock.open.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(cameraManager.isLocked ? .blue : .white)
+                                .frame(width: 50, height: 50)
+                                .background(cameraManager.isLocked ? Color.blue.opacity(0.2) : Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(cameraManager.isLocked ? Color.blue : Color.white.opacity(0.3), lineWidth: 2)
+                                )
+                        }
+                        
+                        // Exposure Control (Long Press)
+                        ExposureButton(exposure: $cameraManager.exposure)
+                        
+                        // Eyedropper Toggle
+                        Button(action: {
+                            cameraManager.isEyedropperActive.toggle()
+                        }) {
+                            Image(systemName: cameraManager.maskSampleColor != nil ? "eyedropper.halffull" : "eyedropper")
+                                .font(.system(size: 24))
+                                .foregroundStyle(cameraManager.isEyedropperActive ? .orange : (cameraManager.maskSampleColor != nil ? .green : .white))
+                                .frame(width: 50, height: 50)
+                                .background(
+                                    cameraManager.isEyedropperActive ? Color.orange.opacity(0.2) : 
+                                    (cameraManager.maskSampleColor != nil ? Color.green.opacity(0.2) : Color.black.opacity(0.5))
+                                )
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(
+                                            cameraManager.isEyedropperActive ? Color.orange : 
+                                            (cameraManager.maskSampleColor != nil ? Color.green : Color.white.opacity(0.3)), 
+                                            lineWidth: 2
+                                        )
+                                )
+                        }
+                    }
+                    .padding(.leading, 20)
+                    
                     Spacer()
                     
-                    Button(action: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            showControls = true
+                    // Right side: Hamburger menu
+                    if !showControls {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                showControls = true
+                            }
+                        }) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 24))
+                                .foregroundStyle(.white)
+                                .frame(width: 50, height: 50)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                                )
                         }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("Controls")
-                                .font(.subheadline.weight(.medium))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                        .padding(.trailing, 20)
                     }
-                    .padding(.bottom, 40) // Above home indicator
                 }
+                .padding(.bottom, 40)
             }
             
             // Sliding control tray from bottom
@@ -155,7 +270,8 @@ struct ContentView: View {
                                             
                                             ForEach(cameraManager.presets) { preset in
                                                 Button(role: .destructive, action: {
-                                                    cameraManager.deletePreset(id: preset.id)
+                                                    presetToDelete = preset
+                                                    showDeleteConfirmation = true
                                                 }) {
                                                     Label("Delete \(preset.name)", systemImage: "trash")
                                                 }
@@ -188,7 +304,8 @@ struct ContentView: View {
                                                             cameraManager.applyPreset(preset)
                                                         },
                                                         onDelete: {
-                                                            cameraManager.deletePreset(id: preset.id)
+                                                            presetToDelete = preset
+                                                            showDeleteConfirmation = true
                                                         }
                                                     )
                                                 }
@@ -203,39 +320,6 @@ struct ContentView: View {
                                         .italic()
                                 }
                             }
-                            .padding(.horizontal)
-                            
-                            // Exposure Slider (like Photos app)
-                            VStack(spacing: 2) {
-                                HStack {
-                                    Text("Exposure")
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.8))
-                                    Spacer()
-                                    Text(String(format: "%+.1f EV", cameraManager.exposure))
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.white.opacity(0.6))
-                                }
-                                HStack(spacing: 8) {
-                                    Image(systemName: "minus")
-                                        .foregroundStyle(.white.opacity(0.6))
-                                        .font(.caption2)
-                                    Slider(value: $cameraManager.exposure, in: -2.0...2.0)
-                                        .tint(.yellow)
-                                        .onTapGesture(count: 2) {
-                                            withAnimation {
-                                                cameraManager.exposure = 0.0
-                                            }
-                                        }
-                                    Image(systemName: "plus")
-                                        .foregroundStyle(.white.opacity(0.6))
-                                        .font(.caption2)
-                                }
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
                             .padding(.horizontal)
                             
                             // Temperature Slider (Smaller)
@@ -303,91 +387,6 @@ struct ContentView: View {
                             .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .padding(.horizontal)
-                            
-                            // Center Crop Slider to reduce edge light spill
-                            VStack(spacing: 2) {
-                                HStack {
-                                    Text("Edge Crop")
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.8))
-                                    Spacer()
-                                    Text(String(format: "%.0f%%", cameraManager.centerCropAmount * 100))
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.white.opacity(0.6))
-                                }
-                                HStack(spacing: 8) {
-                                    Image(systemName: "crop")
-                                        .foregroundStyle(.white.opacity(0.6))
-                                        .font(.caption2)
-                                    Slider(value: $cameraManager.centerCropAmount, in: 0.0...1.0)
-                                        .tint(.cyan)
-                                        .onTapGesture(count: 2) {
-                                            withAnimation {
-                                                cameraManager.centerCropAmount = 0.0
-                                            }
-                                        }
-                                    Image(systemName: "viewfinder")
-                                        .foregroundStyle(.cyan)
-                                        .font(.caption2)
-                                }
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .padding(.horizontal)
-                            
-                            // Lock Settings Button
-                            Button(action: {
-                                cameraManager.toggleLock()
-                            }) {
-                                HStack {
-                                    Image(systemName: cameraManager.isLocked ? "lock.fill" : "lock.open.fill")
-                                    Text(cameraManager.isLocked ? "Settings Locked" : "Lock Settings")
-                                        .font(.caption)
-                                }
-                                .foregroundStyle(.white)
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 16)
-                                .frame(maxWidth: .infinity)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(cameraManager.isLocked ? Color.blue.opacity(0.3) : Color.clear)
-                                )
-                                .background(.ultraThinMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(cameraManager.isLocked ? Color.blue : Color.clear, lineWidth: 2)
-                                )
-                            }
-                            .padding(.horizontal)
-                            
-                            // Macro toggle button
-                            Button(action: {
-                                cameraManager.toggleMacroMode()
-                            }) {
-                                HStack {
-                                    Image(systemName: "camera.macro")
-                                    Text(cameraManager.isMacroMode ? "Macro Mode: ON" : "Macro Mode: OFF")
-                                        .font(.caption)
-                                }
-                                .foregroundStyle(.white)
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 16)
-                                .frame(maxWidth: .infinity)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(cameraManager.isMacroMode ? Color.orange.opacity(0.3) : Color.clear)
-                                )
-                                .background(.ultraThinMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(cameraManager.isMacroMode ? Color.orange : Color.clear, lineWidth: 2)
-                                )
-                            }
-                            .padding(.horizontal)
                         }
                         .padding(.bottom, 24) // Extra padding for home indicator area
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -417,8 +416,214 @@ struct ContentView: View {
                 }
             }
         } message: {
-            Text("Enter a name for this color preset (Temp: \(String(format: "%.2f", cameraManager.temperature)), Tint: \(String(format: "%.2f", cameraManager.tint)))")
+            if cameraManager.maskSampleColor != nil {
+                Text("Saving: Temp: \(String(format: "%.2f", cameraManager.temperature)), Tint: \(String(format: "%.2f", cameraManager.tint)), and eyedropper mask sample")
+            } else {
+                Text("Saving: Temp: \(String(format: "%.2f", cameraManager.temperature)), Tint: \(String(format: "%.2f", cameraManager.tint)) (no mask sample)")
+            }
         }
+        .confirmationDialog(
+            "Delete Preset",
+            isPresented: $showDeleteConfirmation,
+            presenting: presetToDelete
+        ) { preset in
+            Button("Delete \"\(preset.name)\"", role: .destructive) {
+                cameraManager.deletePreset(id: preset.id)
+                presetToDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                presetToDelete = nil
+            }
+        } message: { preset in
+            Text("Are you sure you want to delete the preset \"\(preset.name)\"? This action cannot be undone.")
+        }
+    }
+    
+    // Helper function to convert view coordinates to image coordinates
+    private func convertViewPointToImagePoint(viewPoint: CGPoint, viewSize: CGSize, imageSize: CGSize) -> CGPoint {
+        // Calculate the displayed image size (accounting for aspect fit)
+        let imageAspect = imageSize.width / imageSize.height
+        let viewAspect = viewSize.width / viewSize.height
+        
+        var displayedSize: CGSize
+        if imageAspect > viewAspect {
+            // Image is wider - constrained by width
+            displayedSize = CGSize(width: viewSize.width, height: viewSize.width / imageAspect)
+        } else {
+            // Image is taller - constrained by height
+            displayedSize = CGSize(width: viewSize.height * imageAspect, height: viewSize.height)
+        }
+        
+        // Calculate offset (image is centered in view)
+        let offsetX = (viewSize.width - displayedSize.width) / 2
+        let offsetY = (viewSize.height - displayedSize.height) / 2
+        
+        // Convert to image coordinates
+        let relativeX = (viewPoint.x - offsetX) / displayedSize.width
+        let relativeY = (viewPoint.y - offsetY) / displayedSize.height
+        
+        return CGPoint(
+            x: relativeX * imageSize.width,
+            y: relativeY * imageSize.height
+        )
+    }
+}
+
+// MARK: - Exposure Button Component
+
+struct ExposureButton: View {
+    @Binding var exposure: Double
+    @State private var showSlider = false
+    
+    var body: some View {
+        ZStack {
+            // Main exposure button
+            Button(action: {
+                // Tap resets to 0
+                withAnimation {
+                    exposure = 0.0
+                }
+            }) {
+                ZStack {
+                    Image(systemName: "plus.slash.minus")
+                        .font(.system(size: 24))
+                        .foregroundStyle(exposure != 0 ? .yellow : .white)
+                        .frame(width: 50, height: 50)
+                        .background(exposure != 0 ? Color.yellow.opacity(0.2) : Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(exposure != 0 ? Color.yellow : Color.white.opacity(0.3), lineWidth: 2)
+                        )
+                    
+                    // Show current exposure value if non-zero
+                    if exposure != 0 {
+                        Text(String(format: "%+.1f", exposure))
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.yellow)
+                            .offset(y: 20)
+                    }
+                }
+            }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showSlider = true
+                        }
+                    }
+            )
+        }
+        .popover(isPresented: $showSlider, arrowEdge: .bottom) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text("Exposure")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(String(format: "%+.1f EV", exposure))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.yellow)
+                }
+                
+                HStack(spacing: 8) {
+                    Button(action: {
+                        exposure = max(-2.0, exposure - 0.1)
+                    }) {
+                        Image(systemName: "minus")
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(Color.gray.opacity(0.3))
+                            .clipShape(Circle())
+                    }
+                    
+                    Slider(value: $exposure, in: -2.0...2.0)
+                        .tint(.yellow)
+                    
+                    Button(action: {
+                        exposure = min(2.0, exposure + 0.1)
+                    }) {
+                        Image(systemName: "plus")
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(Color.gray.opacity(0.3))
+                            .clipShape(Circle())
+                    }
+                }
+                
+                Button(action: {
+                    withAnimation {
+                        exposure = 0.0
+                    }
+                }) {
+                    Text("Reset to 0")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.gray.opacity(0.3))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding()
+            .frame(width: 280)
+            .background(.ultraThinMaterial)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+// MARK: - Eyedropper Overlay
+
+struct EyedropperOverlay: View {
+    @Binding var isActive: Bool
+    let onSample: (CGPoint) -> Void
+    @State private var tapLocation: CGPoint?
+    
+    var body: some View {
+        ZStack {
+            // Semi-transparent overlay
+            Color.black.opacity(0.3)
+            
+            // Instructions
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        isActive = false
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .padding()
+                    }
+                }
+                
+                Spacer()
+                
+                VStack(spacing: 12) {
+                    Image(systemName: "eyedropper.halffull")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white)
+                    
+                    Text("Tap on orange film border")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    
+                    Text("Sample the orange mask color\nfor accurate color conversion")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(20)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 10)
+                
+                Spacer()
+            }
+        }
+        .ignoresSafeArea()
     }
 }
 
@@ -458,6 +663,12 @@ struct PresetButton: View {
                             .font(.system(size: 6))
                         Text(String(format: "%.1f", preset.tint))
                             .font(.caption2.monospacedDigit())
+                    }
+                    // Show eyedropper indicator if mask sample is included
+                    if preset.maskSample != nil {
+                        Image(systemName: "eyedropper.halffull")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
                     }
                 }
                 .foregroundStyle(.white.opacity(0.7))
