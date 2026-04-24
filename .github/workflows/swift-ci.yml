@@ -1,0 +1,80 @@
+name: Swift CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    permissions:
+      pull-requests: write  # Required to post the coverage comment
+      contents: read        # Required to checkout the code
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # List available SDKs and Simulators for debugging purposes
+    # comment out if not needed, but can be helpful to ensure the correct environment is set up
+    # - name: List SDKs and Simulators
+    #   run: |
+    #     echo "--- OS RUNTIMES ---"
+    #     xcrun simctl list runtimes
+    #     echo "--- DEVICE TYPES ---"
+    #     xcrun simctl list devicetypes
+    #     echo "--- XCODE DESTINATIONS ---"
+    #     xcodebuild -scheme filmStripPreview -showdestinations  
+
+    - name: Select Highest Xcode
+      run: |
+        XCODE_PATH=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+        sudo xcode-select -s "$XCODE_PATH"
+        echo "Selected Xcode at: $XCODE_PATH"
+
+    # - name: Build and Test
+    #   run: |
+    #     xcodebuild test \
+    #       -scheme filmStripPreview \
+    #       -sdk iphonesimulator \
+    #       -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    #       -derivedDataPath Build/ \
+    #       -enableCodeCoverage YES \
+    #       ARCHS=arm64 \
+    #       ONLY_ACTIVE_ARCH=YES
+    - name: Build and Test
+      run: |
+        xcodebuild test \
+          -scheme filmStripPreview \
+          -sdk iphonesimulator \
+          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+          -only-testing:filmStripPreviewTests \
+          -derivedDataPath Build/ \
+          -enableCodeCoverage YES \
+          IPHONEOS_DEPLOYMENT_TARGET=18.0
+
+    - name: Generate Code Coverage Report
+      run: |
+        PROFDATA=$(find Build -name "*.profdata" | head -n 1)
+        
+        # Look for the binary INSIDE the xctest bundle
+        # This is where the Unit Test instrumentation actually lives
+        BINARY=$(find Build -name "filmStripPreviewTests.xctest" -type d | xargs -I {} find {} -type f -maxdepth 1 -perm +111 | head -n 1)
+
+        echo "--- Debug Info ---"
+        echo "Profdata: $PROFDATA"
+        echo "Binary: $BINARY"
+
+        xcrun llvm-cov export \
+          -format="lcov" \
+          "$BINARY" \
+          -instr-profile "$PROFDATA" \
+          -ignore-filename-regex=".*/Tests/.*|.*/UITests/.*" > coverage.lcov
+
+    - name: Report Code Coverage
+      uses: romeovs/lcov-reporter-action@v0.3.1
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        lcov-file: ./coverage.lcov

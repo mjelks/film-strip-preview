@@ -79,12 +79,13 @@ struct ColorPresetTests {
 
 // MARK: - Camera Manager Tests
 
-@Suite("Camera Manager Tests")
+@Suite("Camera Manager Tests", .serialized)
 struct CameraManagerTests {
     
     // Helper to clear UserDefaults before each test
     private func clearPresets() {
         UserDefaults.standard.removeObject(forKey: "colorPresets")
+        UserDefaults.standard.synchronize()
     }
     
     @Test("Initial state")
@@ -149,6 +150,9 @@ struct CameraManagerTests {
             manager.deletePreset(id: presetId)
             #expect(manager.presets.isEmpty)
         }
+        
+        // Cleanup
+        clearPresets()
     }
     
     @Test("Applying a preset")
@@ -194,9 +198,12 @@ struct CameraManagerTests {
         #expect(preset.name == "With Mask")
         #expect(preset.temperature == -0.5)
         #expect(preset.tint == 0.8)
-        #expect(preset.maskSample?.x == 0.9)
-        #expect(preset.maskSample?.y == 0.6)
-        #expect(preset.maskSample?.z == 0.3)
+        #expect(preset.maskSample?.x ?? 0.0 == 0.9)
+        #expect(preset.maskSample?.y ?? 0.0 == 0.6)
+        #expect(preset.maskSample?.z ?? 0.0 == 0.3)
+        
+        // Cleanup
+        clearPresets()
     }
     
     @Test("Deleting selected preset clears selection")
@@ -213,6 +220,9 @@ struct CameraManagerTests {
             manager.deletePreset(id: preset.id)
             #expect(manager.selectedPresetId == nil)
         }
+        
+        // Cleanup
+        clearPresets()
     }
     
     @Test("Temperature bounds")
